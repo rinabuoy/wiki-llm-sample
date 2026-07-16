@@ -1,6 +1,6 @@
 # Wiki schema and conventions
 
-This repo is a personal knowledge base built by an LLM agent, following the "LLM wiki" pattern: `raw/` holds immutable sources, `wiki/` holds the markdown knowledge base you (the agent) write and maintain, and this file is the schema. A Python tool, `wikillm`, mirrors `wiki/*.md` into a Neo4j Aura graph so structure (links, tags, orphans, hubs) can be queried directly instead of eyeballed.
+This repo is a personal knowledge base built by an LLM agent, following the "LLM wiki" pattern: `raw/` holds immutable sources, `wiki/` holds the markdown knowledge base you (the agent) write and maintain, and this file is the schema. A Python tool, `wikillm`, reads `wiki/*.md` and builds an in-memory link graph on demand, so structure (links, tags, orphans, hubs) can be queried directly instead of eyeballed. Everything lives in the markdown files — there is no external database.
 
 ## Layout
 
@@ -43,26 +43,24 @@ Cross-reference other pages with `[[Page Title]]` (matches by title, filename, o
 4. Update or create entity/concept pages touched by this source (`wikillm new entity ...` / `wikillm new concept ...` as needed), linking back to the source with `[[...]]` and listing it under `sources:` in frontmatter.
 5. Update `wiki/index.md` with any new/changed pages.
 6. `wikillm log "ingest | <source title>"`.
-7. `wikillm sync` to push the updated graph to Neo4j.
 
 **Answer a query**
-1. Read `wiki/index.md` first; use `wikillm search "<query>"` for full-text hits across the graph if the index isn't enough.
+1. Read `wiki/index.md` first; use `wikillm search "<query>"` for keyword hits across titles, tags, and body text if the index isn't enough.
 2. Read the relevant pages, synthesize an answer with citations to page paths.
-3. If the answer is worth keeping (a comparison, an analysis, a new connection), file it back as a new wiki page rather than letting it live only in chat — then log and sync.
+3. If the answer is worth keeping (a comparison, an analysis, a new connection), file it back as a new wiki page rather than letting it live only in chat — then log it.
 
 **Lint**
-Run `wikillm lint` periodically. It reports orphan pages (no inbound/outbound links), duplicate titles, and top hub pages via the Neo4j graph. Use it to decide what needs new cross-references or its own page. Then `wikillm log "lint | <summary>"`.
+Run `wikillm lint` periodically. It reports orphan pages (no inbound/outbound links), duplicate titles, unresolved `[[wikilinks]]`, and top hub pages. Use it to decide what needs new cross-references or its own page. Then `wikillm log "lint | <summary>"`.
 
 ## wikillm CLI
 
 ```
 wikillm init                        scaffold raw/ and wiki/ (idempotent)
 wikillm new <type> "<title>"        create a page from template
-wikillm sync                        push wiki/*.md into Neo4j Aura (full resync, prunes deleted pages)
-wikillm search "<query>"            full-text search over the graph
-wikillm lint                        orphans, duplicate titles, hub report
+wikillm search "<query>"            keyword search over titles, tags, and body text
+wikillm lint                        orphans, duplicate titles, unresolved links, hub report
 wikillm log "<kind> | <title>"      append a timestamped log.md entry
-wikillm stats                       node/relationship counts, orphan count
+wikillm stats                       page/link counts, orphan count
 ```
 
-Requires `.env` (copy from `.env.example`) with Neo4j Aura credentials. Run `wikillm sync` after any batch of page edits — the graph is a derived view of the markdown, not a separate source of truth.
+No external services or credentials required — every command reads `wiki/*.md` directly.

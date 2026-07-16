@@ -36,7 +36,10 @@ class Page:
 
     @property
     def id(self) -> str:
-        return self.path.relative_to(WIKI_DIR).as_posix()
+        try:
+            return self.path.relative_to(WIKI_DIR).as_posix()
+        except ValueError:
+            return self.path.name
 
     @property
     def links(self) -> list[str]:
@@ -94,6 +97,50 @@ def iter_pages(wiki_dir: Path = WIKI_DIR):
         if path.name in ("index.md", "log.md"):
             continue
         yield parse_page(path)
+
+
+def build_resolver(pages: list[Page]) -> dict[str, str]:
+    resolver: dict[str, str] = {}
+    for page in pages:
+        keys = {page.title, page.path.stem, *page.aliases}
+        for key in keys:
+            resolver[key.strip().lower()] = page.id
+    return resolver
+
+
+@dataclass
+class LinkGraph:
+    resolved: dict[str, list[str]]
+    unresolved: dict[str, list[str]]
+
+    def out_degree(self, page_id: str) -> int:
+        return len(self.resolved.get(page_id, []))
+
+    def in_degree(self, page_id: str) -> int:
+        return sum(1 for targets in self.resolved.values() if page_id in targets)
+
+    def degree(self, page_id: str) -> int:
+        return self.out_degree(page_id) + self.in_degree(page_id)
+
+
+def build_link_graph(pages: list[Page]) -> LinkGraph:
+    resolver = build_resolver(pages)
+    resolved: dict[str, list[str]] = {}
+    unresolved: dict[str, list[str]] = {}
+    for page in pages:
+        targets = []
+        misses = []
+        for raw in WIKILINK_RE.findall(page.body):
+            key = raw.strip().lower()
+            target_id = resolver.get(key)
+            if target_id and target_id != page.id:
+                targets.append(target_id)
+            elif not target_id:
+                misses.append(raw.strip())
+        resolved[page.id] = targets
+        if misses:
+            unresolved[page.id] = misses
+    return LinkGraph(resolved=resolved, unresolved=unresolved)
 
 
 PAGE_TYPE_DIRS = {

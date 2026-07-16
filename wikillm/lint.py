@@ -2,37 +2,38 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .graph import WikiGraph
-from .markdown import Page
+from .markdown import Page, build_link_graph
 
 
 @dataclass
 class LintReport:
-    orphans: list[dict] = field(default_factory=list)
-    hubs: list[dict] = field(default_factory=list)
+    orphans: list[Page] = field(default_factory=list)
+    hubs: list[tuple[Page, int]] = field(default_factory=list)
     unresolved_links: dict[str, list[str]] = field(default_factory=dict)
-    missing_titles: list[str] = field(default_factory=list)
     duplicate_titles: dict[str, list[str]] = field(default_factory=dict)
 
 
 def check_pages(pages: list[Page]) -> LintReport:
-    report = LintReport()
+    by_id = {p.id: p for p in pages}
+    graph = build_link_graph(pages)
 
     seen: dict[str, list[str]] = {}
     for page in pages:
-        if not page.title or page.title == page.path.stem:
-            if not page.title:
-                report.missing_titles.append(page.id)
         seen.setdefault(page.title.strip().lower(), []).append(page.id)
+    duplicate_titles = {title: ids for title, ids in seen.items() if len(ids) > 1}
 
-    report.duplicate_titles = {
-        title: ids for title, ids in seen.items() if len(ids) > 1
-    }
-    return report
+    orphans = [p for p in pages if graph.degree(p.id) == 0]
 
+    hubs = sorted(
+        ((p, graph.degree(p.id)) for p in pages),
+        key=lambda pair: pair[1],
+        reverse=True,
+    )
+    hubs = [(p, d) for p, d in hubs if d > 0][:5]
 
-def check_graph(graph: WikiGraph, report: LintReport) -> LintReport:
-    stats = graph.stats()
-    report.orphans = stats["orphans"]
-    report.hubs = [h for h in stats["hubs"] if h["degree"] > 0][:5]
-    return report
+    return LintReport(
+        orphans=orphans,
+        hubs=hubs,
+        unresolved_links=graph.unresolved,
+        duplicate_titles=duplicate_titles,
+    )

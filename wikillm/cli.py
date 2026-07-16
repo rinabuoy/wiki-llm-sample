@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
 from datetime import date
 
 from rich.console import Console
 from rich.table import Table
 
 from .config import INDEX_FILE, LOG_FILE, RAW_DIR, WIKI_DIR
-from .graph import WikiGraph
-from .lint import check_graph, check_pages
-from .markdown import iter_pages, new_page
+from .lint import check_pages
+from .markdown import build_link_graph, iter_pages, new_page
+from .search import search as search_pages
 
 console = Console()
 
@@ -33,25 +34,10 @@ def cmd_new(args):
     console.print(f"[green]Created[/green] {path.relative_to(WIKI_DIR.parent)}")
 
 
-def cmd_sync(args):
-    pages = list(iter_pages())
-    if not pages:
-        console.print("[yellow]No wiki pages found to sync.[/yellow]")
-        return
-    with WikiGraph() as graph:
-        report = graph.sync(pages)
-
-    console.print(f"[green]Synced {report.synced} pages[/green], deleted {report.deleted} stale nodes.")
-    if report.unresolved_links:
-        console.print("[yellow]Unresolved links:[/yellow]")
-        for page_id, links in report.unresolved_links.items():
-            console.print(f"  {page_id}: {', '.join(links)}")
-
-
 def cmd_search(args):
-    with WikiGraph() as graph:
-        results = graph.search(args.query, limit=args.limit)
-    if not results:
+    pages = list(iter_pages())
+    hits = search_pages(pages, args.query, limit=args.limit)
+    if not hits:
         console.print("[yellow]No matches.[/yellow]")
         return
     table = Table(show_header=True)
@@ -59,33 +45,36 @@ def cmd_search(args):
     table.add_column("Type")
     table.add_column("Title")
     table.add_column("Path")
-    for r in results:
-        table.add_row(f"{r['score']:.2f}", r["type"], r["title"], r["id"])
+    for hit in hits:
+        table.add_row(f"{hit.score:.1f}", hit.page.type, hit.page.title, hit.page.id)
     console.print(table)
 
 
 def cmd_lint(args):
     pages = list(iter_pages())
     report = check_pages(pages)
-    with WikiGraph() as graph:
-        report = check_graph(graph, report)
 
     if report.duplicate_titles:
         console.print("[red]Duplicate titles:[/red]")
         for title, ids in report.duplicate_titles.items():
             console.print(f"  {title}: {', '.join(ids)}")
 
+    if report.unresolved_links:
+        console.print("[yellow]Unresolved links:[/yellow]")
+        for page_id, links in report.unresolved_links.items():
+            console.print(f"  {page_id}: {', '.join(links)}")
+
     if report.orphans:
         console.print("[yellow]Orphan pages (no links in or out):[/yellow]")
-        for o in report.orphans:
-            console.print(f"  {o['title']} ({o['id']})")
+        for page in report.orphans:
+            console.print(f"  {page.title} ({page.id})")
 
     if report.hubs:
         console.print("[cyan]Top hub pages:[/cyan]")
-        for h in report.hubs:
-            console.print(f"  {h['title']} — {h['degree']} links")
+        for page, degree in report.hubs:
+            console.print(f"  {page.title} — {degree} links")
 
-    if not (report.duplicate_titles or report.orphans):
+    if not (report.duplicate_titles or report.unresolved_links or report.orphans):
         console.print("[green]No issues found.[/green]")
 
 
@@ -97,28 +86,26 @@ def cmd_log(args):
 
 
 def cmd_stats(args):
-    with WikiGraph() as graph:
-        stats = graph.stats()
+    pages = list(iter_pages())
+    graph = build_link_graph(pages)
 
+    by_type = Counter(p.type for p in pages)
     table = Table(title="Pages by type")
     table.add_column("Type")
     table.add_column("Count")
-    for row in stats["by_type"]:
-        table.add_row(row["type"] or "(untyped)", str(row["n"]))
+    for type_name, count in by_type.most_common():
+        table.add_row(type_name, str(count))
     console.print(table)
 
-    table = Table(title="Relationships")
-    table.add_column("Type")
-    table.add_column("Count")
-    for row in stats["relationships"]:
-        table.add_row(row["rel"], str(row["n"]))
-    console.print(table)
-
-    console.print(f"[yellow]Orphans:[/yellow] {len(stats['orphans'])}")
+    total_links = sum(len(targets) for targets in graph.resolved.values())
+    orphan_count = sum(1 for p in pages if graph.degree(p.id) == 0)
+    console.print(f"[cyan]Total pages:[/cyan] {len(pages)}")
+    console.print(f"[cyan]Total links:[/cyan] {total_links}")
+    console.print(f"[yellow]Orphans:[/yellow] {orphan_count}")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="wikillm", description="LLM wiki + Neo4j Aura knowledge graph")
+    parser = argparse.ArgumentParser(prog="wikillm", description="LLM-maintained markdown wiki")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("init", help="Scaffold raw/ and wiki/ directories")
@@ -130,22 +117,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tags", nargs="*", default=[])
     p.set_defaults(func=cmd_new)
 
-    p = sub.add_parser("sync", help="Sync wiki/*.md into the Neo4j Aura graph")
-    p.set_defaults(func=cmd_sync)
-
-    p = sub.add_parser("search", help="Full-text search over the graph")
+    p = sub.add_parser("search", help="Search wiki pages by title, tags, and body text")
     p.add_argument("query")
     p.add_argument("--limit", type=int, default=10)
     p.set_defaults(func=cmd_search)
 
-    p = sub.add_parser("lint", help="Health-check the wiki: orphans, duplicates, hubs")
+    p = sub.add_parser("lint", help="Health-check the wiki: orphans, duplicates, unresolved links, hubs")
     p.set_defaults(func=cmd_lint)
 
     p = sub.add_parser("log", help="Append a timestamped entry to wiki/log.md")
     p.add_argument("entry")
     p.set_defaults(func=cmd_log)
 
-    p = sub.add_parser("stats", help="Show graph summary statistics")
+    p = sub.add_parser("stats", help="Show wiki summary statistics")
     p.set_defaults(func=cmd_stats)
 
     return parser

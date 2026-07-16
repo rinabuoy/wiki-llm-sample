@@ -1,11 +1,9 @@
 [project]
 name = "wikillm"
 version = "0.1.0"
-description = "LLM-maintained markdown wiki, synced to a Neo4j Aura knowledge graph"
+description = "LLM-maintained markdown wiki"
 requires-python = ">=3.9"
 dependencies = [
-    "neo4j>=5.19",
-    "python-dotenv>=1.0",
     "PyYAML>=6.0",
     "rich>=13.0",
 ]
