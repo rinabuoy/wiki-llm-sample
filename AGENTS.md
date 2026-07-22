@@ -40,7 +40,7 @@ Cross-reference other pages with `[[Page Title]]` (matches by title, filename, o
 1. Read the new file in `raw/`.
 2. Discuss key takeaways with the user.
 3. `wikillm new source "<title>"` to create the source page; fill in the summary and takeaways.
-4. Update or create entity/concept pages touched by this source (`wikillm new entity ...` / `wikillm new concept ...` as needed), linking back to the source with `[[...]]` and listing it under `sources:` in frontmatter.
+4. For each entity/concept touched by this source, run `wikillm search "<name>"` first to check whether it already has a page (under this or a different wording) before creating a new one — this is what prevents duplicate/orphan pages as the wiki grows. Update the existing page if found, otherwise `wikillm new entity ...` / `wikillm new concept ...`. Either way, link back to the source with `[[...]]` and list it under `sources:` in frontmatter.
 5. Update `wiki/index.md` with any new/changed pages.
 6. `wikillm log "ingest | <source title>"`.
 
