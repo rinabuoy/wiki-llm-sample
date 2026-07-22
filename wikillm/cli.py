@@ -11,7 +11,7 @@ from rich.table import Table
 from .config import INDEX_FILE, LOG_FILE, RAW_DIR, WIKI_DIR
 from .lint import check_pages
 from .markdown import build_link_graph, iter_pages, new_page
-from .search import search as search_pages
+from .search import hybrid_search
 
 console = Console()
 
@@ -36,17 +36,31 @@ def cmd_new(args):
 
 def cmd_search(args):
     pages = list(iter_pages())
-    hits = search_pages(pages, args.query, limit=args.limit)
+    hits, vector_used = hybrid_search(pages, args.query, limit=args.limit)
+    if not vector_used:
+        console.print(
+            "[dim]Semantic search unavailable (fastembed not installed) — "
+            "keyword-only results. Run `pip install -e '.[vector]'` to enable it.[/dim]"
+        )
     if not hits:
         console.print("[yellow]No matches.[/yellow]")
         return
     table = Table(show_header=True)
     table.add_column("Score")
+    table.add_column("Keyword")
+    table.add_column("Semantic")
     table.add_column("Type")
     table.add_column("Title")
     table.add_column("Path")
     for hit in hits:
-        table.add_row(f"{hit.score:.1f}", hit.page.type, hit.page.title, hit.page.id)
+        table.add_row(
+            f"{hit.score:.2f}",
+            f"{hit.keyword_score:.1f}",
+            f"{hit.semantic_score:.2f}",
+            hit.page.type,
+            hit.page.title,
+            hit.page.id,
+        )
     console.print(table)
 
 
