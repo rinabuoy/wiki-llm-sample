@@ -217,9 +217,9 @@ class WikiGraph:
         with self._session() as session:
             result = session.run(
                 """
-                CALL db.index.vector.queryNodes('pageEmbedding', $limit, $vector)
-                YIELD node, score
-                RETURN node.id AS id, node.title AS title, node.type AS type, score
+                MATCH (p:Page)
+                SEARCH p IN (VECTOR INDEX pageEmbedding FOR $vector LIMIT $limit) SCORE AS score
+                RETURN p.id AS id, p.title AS title, p.type AS type, score
                 ORDER BY score DESC
                 """,
                 vector=query_vector,
