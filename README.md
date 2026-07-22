@@ -11,22 +11,37 @@ pip install -e ".[test]"
 wikillm init
 ```
 
+Everything above works with zero external services. Two optional extras add capability:
+
+```bash
+pip install -e ".[vector]"   # local sentence embeddings for semantic search (fastembed, on-device)
+pip install -e ".[graph]"    # Neo4j Aura sync (neo4j driver + python-dotenv)
+```
+
+For `.[graph]`, also `cp .env.example .env` and fill in your Neo4j Aura URI/username/password (create a free instance at [console.neo4j.io](https://console.neo4j.io) if you don't have one).
+
 ## Usage
 
 ```bash
 wikillm new entity "Ada Lovelace" --tags mathematician computing-history
-wikillm search "computing history"
+wikillm search "computing history"    # hybrid keyword + semantic search
 wikillm lint                          # orphans, duplicate titles, unresolved links, hubs
 wikillm log "ingest | Note G"
 wikillm stats
+wikillm sync                          # push wiki/*.md into Neo4j Aura (requires .[graph])
 ```
 
 ## How it fits together
 
 - **raw/** — immutable source documents. Never edited by the agent.
-- **wiki/** — markdown pages (`entities/`, `concepts/`, `sources/`, plus `index.md` and `log.md`). This is what you read and what the agent writes.
-- **wikillm/** — the Python package: parses frontmatter + `[[wikilinks]]` and builds an in-memory link graph from `wiki/*.md` on every command. `lint` uses it to find orphans, hub pages, and unresolved links; `search` does a simple scored full-text lookup over titles, tags, and body text; `stats` reports page/link counts. Nothing is persisted outside the markdown files — the graph is recomputed each run.
+- **wiki/** — markdown pages (`entities/`, `concepts/`, `sources/`, plus `index.md` and `log.md`). This is what you read and what the agent writes. Always the source of truth.
+- **wikillm/** — the Python package:
+  - `markdown.py` parses frontmatter + `[[wikilinks]]` and builds an in-memory link graph from `wiki/*.md` on every command.
+  - `lint.py` uses that graph to find orphans, hub pages, duplicate titles, and unresolved links.
+  - `embeddings.py` computes sentence embeddings for pages (local model via `fastembed`, no API calls), cached in `.wikillm_cache/` keyed by content hash so only changed pages get re-embedded.
+  - `search.py` blends keyword scoring with cosine similarity over those embeddings for hybrid search; falls back to keyword-only if `fastembed` isn't installed.
+  - `graph.py` (`wikillm sync`) pushes the current markdown state into Neo4j Aura: nodes (`Page` + `Entity`/`Concept`/`Source`/`Topic`), relationships (`LINKS_TO`, `HAS_TAG`, `DERIVED_FROM`), a full-text index, and a native vector index over the same embeddings.
 
-Point your LLM agent (Claude Code, etc.) at this repo with `AGENTS.md` as its schema, and it does the reading, summarizing, and cross-referencing — this tooling just keeps the bookkeeping (index, log, link integrity) honest.
+**Neo4j Aura is a separate, rebuildable production copy** — not a second source of truth. You never hand-edit it; `wikillm sync` regenerates it entirely from the markdown each run (upserts current pages, deletes stale ones, rebuilds relationships and the vector index). The point is that a production app can query Aura directly over Bolt/Cypher — for graph traversal, full-text, or vector search — without depending on this Python tool, the local embedding cache, or the markdown files at all. Everything else (`init`/`new`/`search`/`lint`/`log`/`stats`) only ever touches `wiki/*.md` and needs no credentials.
 
-At larger scale, if `wikillm search`'s naive term matching stops being good enough, consider swapping in a proper local search engine like [qmd](https://github.com/tobi/qmd) (hybrid BM25/vector search over markdown, with a CLI and MCP server) rather than reintroducing external infrastructure.
+Point your LLM agent (Claude Code, etc.) at this repo with `AGENTS.md` as its schema, and it does the reading, summarizing, and cross-referencing — this tooling just keeps the bookkeeping (index, log, link integrity, and optionally the Aura mirror) honest.

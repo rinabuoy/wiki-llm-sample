@@ -64,6 +64,37 @@ def cmd_search(args):
     console.print(table)
 
 
+def cmd_sync(args):
+    from .embeddings import EmbeddingsUnavailable, get_page_embeddings
+    from .graph import WikiGraph
+
+    pages = list(iter_pages())
+    if not pages:
+        console.print("[yellow]No wiki pages found to sync.[/yellow]")
+        return
+
+    embeddings = {}
+    try:
+        embeddings = get_page_embeddings(pages)
+    except EmbeddingsUnavailable:
+        console.print(
+            "[dim]Skipping embeddings (fastembed not installed) — "
+            "syncing graph structure only.[/dim]"
+        )
+
+    with WikiGraph() as graph:
+        report = graph.sync(pages, embeddings=embeddings)
+
+    console.print(
+        f"[green]Synced {report.synced} pages[/green] "
+        f"({report.embedded} with embeddings), deleted {report.deleted} stale nodes."
+    )
+    if report.unresolved_links:
+        console.print("[yellow]Unresolved links:[/yellow]")
+        for page_id, links in report.unresolved_links.items():
+            console.print(f"  {page_id}: {', '.join(links)}")
+
+
 def cmd_lint(args):
     pages = list(iter_pages())
     report = check_pages(pages)
@@ -135,6 +166,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("query")
     p.add_argument("--limit", type=int, default=10)
     p.set_defaults(func=cmd_search)
+
+    p = sub.add_parser("sync", help="Push wiki/*.md into Neo4j Aura (structure + embeddings)")
+    p.set_defaults(func=cmd_sync)
 
     p = sub.add_parser("lint", help="Health-check the wiki: orphans, duplicates, unresolved links, hubs")
     p.set_defaults(func=cmd_lint)
